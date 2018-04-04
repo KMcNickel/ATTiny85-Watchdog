@@ -1,4 +1,6 @@
 //Version 0.1
+//This file is licensed under the MIT License. See the "LICENSE" file for more information
+
 unsigned long resetTime;
 unsigned long watchdogTime;
 bool lastWDState;
