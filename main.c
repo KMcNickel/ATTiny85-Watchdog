@@ -35,7 +35,9 @@
 unsigned long watchdogTime;															//The last time the device sent a rising edge
 unsigned long resetTime;															//When the reset output was taken LOW
 
-unsigned long currentTime;															//Updated when timer0 overflows
+unsigned long millis();
+
+unsigned long t0Millis;															//Updated when timer0 overflows
 unsigned long timeFraction;															//Tracks the inaccuracy of the above number so we can fix it every ~44 ms
 
 int delayLength;																	//How often the device has to send a rising edge
@@ -85,30 +87,40 @@ int main(void)
 
     while (1) 
     {
-		  if ((PINB & 1) && !(watchdogStatus & 1)) {											//If we have a rising edge
-			  watchdogTime = currentTime;														//Update the time we last received the rising edge
-			  if (!((watchdogStatus >> 1) & 1)) {															//If the system was shutdown due to a prior failure
-				  PORTB |= _BV(1);																	//Turn the power cutoff back on
-				  watchdogStatus |= 2;																//and update the status
-			  }
-		  }
-		  if (((watchdogStatus >> 1) & 1) && (currentTime - watchdogTime >= delayLength)) {			//If we WERE doing fine, but we have exceeded our delay time
-			  PORTB = ~_BV(1) & ~_BV(2) & PORTB;													//Take both outputs low
-			  resetTime = currentTime;																//Make a note of the time so we can bring the reset back on
-			  watchdogStatus &= 253;																//and update the status
-		  }
-		  if (((watchdogStatus >> 1) & 1) && (currentTime - resetTime >= 100)) PORTB |= _BV(2);		//If we are not doing fine and the reset pin has been LOW for at least 0.1s, take it HIGH
-		  if (PINB & 1) {																	//Update the input state because edge detection
+		unsigned long currentTime = millis();
+		if ((PINB & 1) && !(watchdogStatus & 1)) {											//If we have a rising edge
+			watchdogTime = currentTime;														//Update the time we last received the rising edge
+			if (!((watchdogStatus >> 1) & 1)) {														//If the system was shutdown due to a prior failure
+				PORTB |= _BV(1);																	//Turn the power cutoff back on
+				watchdogStatus |= 2;																//and update the status
+			}
+		}
+		if (((watchdogStatus >> 1) & 1) && (currentTime - watchdogTime >= delayLength)) {	//If we WERE doing fine, but we have exceeded our delay time
+			PORTB = ~_BV(1) & ~_BV(2) & PORTB;													//Take both outputs low
+			resetTime = currentTime;															//Make a note of the time so we can bring the reset back on
+			watchdogStatus &= 253;																//and update the status
+		}
+		if (((watchdogStatus >> 1) & 1) && (currentTime - resetTime >= 100)) PORTB |= _BV(2);	//If we are not doing fine and the reset pin has been LOW for at least 0.1s, take it HIGH
+		if (PINB & 1) {																			//Update the input state because edge detection
 			watchdogStatus |= 1;
-		  } else watchdogStatus &= 254;
-    }
+		} else watchdogStatus &= 254;
+	}
 }
 
 ISR(TIMER0_OVF_vect) {
-	currentTime += millisIncrement;
+	t0Millis += millisIncrement;
 	timeFraction += fractIncrement;
 	if (timeFraction >= fractMax) {
 		timeFraction -= fractMax;
-		currentTime += 1;
+		t0Millis += 1;
 	}
+}
+
+unsigned long millis() {
+	unsigned long m;
+	char oldSREG = SREG;
+	cli();
+	m = t0Millis;
+	SREG = oldSREG;
+	return m;
 }
