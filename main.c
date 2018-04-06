@@ -27,7 +27,7 @@
 
 #define F_CPU 1000000UL																//Set the clock to 1MHz
 
-#define microsPerOverflow	1 * 8 * 256												//1 MHz = 1 cycle per millisecond * prescaler * buffer size
+#define microsPerOverflow	8 * 256													//1 MHz = 1 cycle per millisecond * prescaler * buffer size
 #define millisIncrement		microsPerOverflow / 1000								//How many whole millis we need to increment when we get an overflow
 #define fractIncrement		(microsPerOverflow % 1000) >> 2							//1 byte representation of how inaccurate this system is so we can compensate (in microseconds)
 #define fractMax			1000 >> 2												//1 byte representation of how many microseconds are in a millisecond (kinda)
