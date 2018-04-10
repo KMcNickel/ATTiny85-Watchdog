@@ -13,7 +13,8 @@
  * Setting the delay:
  *	PB3 - 5 are set up like 3 bits. PB3 is the LSB (value 1), PB5 is the MSB (value 4)
  *	Value	Time
- *	1		500 milliseconds
+ *	0		500 milliseconds
+ *	1		1 second
  *	2		3 seconds
  *	3		5 seconds
  *	4		10 seconds
@@ -25,27 +26,19 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 
-#define F_CPU 1000000UL																//Set the clock to 1MHz
+#define F_CPU 1000000UL														//Set the clock to 1MHz
 
-#define microsPerOverflow	8 * 256													//1 MHz = 1 cycle per millisecond * prescaler * buffer size
-#define millisIncrement		microsPerOverflow / 1000								//How many whole millis we need to increment when we get an overflow
-#define fractIncrement		(microsPerOverflow % 1000) >> 2							//1 byte representation of how inaccurate this system is so we can compensate (in microseconds)
-#define fractMax			1000 >> 2												//1 byte representation of how many microseconds are in a millisecond (kinda)
+char majCount;
+char minCount;
 
-unsigned long watchdogTime;															//The last time the device sent a rising edge
-unsigned long resetTime;															//When the reset output was taken LOW
+char majMax;
+char minMax;
 
-unsigned long millis();
+char rstMajCount;
+char rstMajMax = 1;
+char rstMinCount;
+char rstMinMax = 17;
 
-unsigned long t0Millis;															//Updated when timer0 overflows
-unsigned long timeFraction;															//Tracks the inaccuracy of the above number so we can fix it every ~44 ms
-
-int delayLength;																	//How often the device has to send a rising edge
-
-char watchdogStatus;
-/*Bit 0 is the last input state (for edge detection)
- *Bit 1 is the status of the watched device (set to 0 if no response within time limit)
-*/
 int main(void)
 {
 	//B0: Watchdog Input
@@ -56,71 +49,69 @@ int main(void)
 	//B5: Delay 3 (4) MSB
 	DDRB = 0b00000110;
 
-	//Setting up registers to use Timer0 like the arduino millis() function
-	GTCCR |= 1 << 7;																	//Pause the prescaler so we can set everything up
-	TCCR0A = 0b00000000;																//No output compare, WGM normal
-	TCCR0B = 0b00000010;																//No force output compare, WGM normal, prescaler 8
-	TIMSK =	 0b00000010;																//No output compare interrupt, Enable overflow interrupt
-	sei();																				//Enable interrupts globally
-	GTCCR &= ~(1 >> 7);																	//Enable the prescaler
+	PORTB &= (~_BV(1) & ~_BV(2));											//Set PB1 and 2 low while we start up
 
-	PORTB = ~_BV(1) & ~_BV(2) & PORTB;													//Set PB1 and 2 low while we start up
-
-	char delayVal = 0;																	//Get the values of the three delay setting pins and set up the delay length.
+	char delayVal = 0;														//Get the values of the three delay setting pins and set up the delay length.
+	char pre;
 	if ((PINB & _BV(3)) >> 3) delayVal += 1;
 	if ((PINB & _BV(4)) >> 4) delayVal += 2;
 	if ((PINB & _BV(5)) >> 5) delayVal += 4;
 	switch (delayVal) {
-		case 0: delayLength = 500; break;
-		case 1: delayLength = 1000; break;
-		case 2: delayLength = 3000; break;
-		case 3: delayLength = 5000; break;
-		case 4: delayLength = 10000; break;
-		case 5: delayLength = 15000; break;
-		case 6: delayLength = 30000; break;
-		case 7: delayLength = 60000; break;
-		default: while(1) {};																	//In the off chance we get a different value, stop here (failsafe)
+		case 0: pre = 9; majMax = 7; minMax = 20; break;
+		case 1: pre = 9; majMax = 15; minMax = 8; break;
+		case 2: pre = 10; majMax = 22; minMax = 57; break;
+		case 3: pre = 10; majMax = 38; minMax = 9; break;
+		case 4: pre = 10; majMax = 76; minMax = 19; break;
+		case 5: pre = 10; majMax = 114; minMax = 28; break;
+		case 6: pre = 12; majMax = 57; minMax = 56; break;
+		case 7: pre = 13; majMax = 57; minMax = 113; break;
+		default: while(1) {};													//In the off chance we get a different value, stop here (failsafe)
 	}
 
-	while (PINB & 1) {};																	//Since everything is off, the input should NOT be HIGH (failsafe)
-	PORTB = (_BV(1) & _BV(2)) | PORTB;														//Turn everything on, we are done setting up
+	GTCCR |= 1 << 7;														//Timer 0: Pause the prescaler so we can set everything up
+	GTCCR &= 0b10000001;													//Timer 1: Disable output compare
+	TCCR1 = 0b00000000 & pre;												//Timer 1: Disable PWM and output compare, set prescale
+	TCCR0A = 0b00000000;													//Timer 0: No output compare, WGM normal
+	TCCR0B = 0b00000010;													//Timer 0: No force output compare, WGM normal, prescaler 8
+	TIMSK =	 0b00000110;													//Both Timers: No output compare interrupt, Enable overflow interrupt
 
-    while (1) 
-    {
-		unsigned long currentTime = millis();
-		if ((PINB & 1) && !(watchdogStatus & 1)) {											//If we have a rising edge
-			watchdogTime = currentTime;														//Update the time we last received the rising edge
-			if (!((watchdogStatus >> 1) & 1)) {														//If the system was shutdown due to a prior failure
-				PORTB |= _BV(1);																	//Turn the power cutoff back on
-				watchdogStatus |= 2;																//and update the status
-			}
-		}
-		if (((watchdogStatus >> 1) & 1) && (currentTime - watchdogTime >= delayLength)) {	//If we WERE doing fine, but we have exceeded our delay time
-			PORTB = ~_BV(1) & ~_BV(2) & PORTB;													//Take both outputs low
-			resetTime = currentTime;															//Make a note of the time so we can bring the reset back on
-			watchdogStatus &= 253;																//and update the status
-		}
-		if (((watchdogStatus >> 1) & 1) && (currentTime - resetTime >= 100)) PORTB |= _BV(2);	//If we are not doing fine and the reset pin has been LOW for at least 0.1s, take it HIGH
-		if (PINB & 1) {																			//Update the input state because edge detection
-			watchdogStatus |= 1;
-		} else watchdogStatus &= 254;
-	}
+	while (PINB & 1) {};													//Since everything is off, the input should NOT be HIGH (failsafe)
+	PORTB = (_BV(1) & _BV(2)) | PORTB;										//Turn everything on
+	sei();																	//Enable interrupts globally, setup is done
+
+//At this point, interrupts are handling everything so no loop is needed
 }
 
-ISR(TIMER0_OVF_vect) {
-	t0Millis += millisIncrement;
-	timeFraction += fractIncrement;
-	if (timeFraction >= fractMax) {
-		timeFraction -= fractMax;
-		t0Millis += 1;
-	}
+ISR(TIMER1_OVF_vect) {														//When Timer1 overflows
+	if(PINB & 4) majCount++;													//If all is well, increase the major timer count
+	if(!(PINB & 2)) rstMajCount++;												//If we are resetting, increase the reset major timer count
+	if(majCount == majMax || rstMajCount == rstMajMax) GTCCR &= ~(1 >> 7);		//If we have reached the required number of overflows for either count, start the Timer0 prescaler
 }
 
-unsigned long millis() {
-	unsigned long m;
-	char oldSREG = SREG;
-	cli();
-	m = t0Millis;
-	SREG = oldSREG;
-	return m;
+ISR(TIMER0_OVF_vect) {														//When Timer0 overflows
+	if(majCount == majMax) {													//If we have reached the major timer count
+		minCount++;																	//Incease the minor timer count
+		if(minCount == minMax) {													//If we have reached the required number of overflows, the monitored device has a problem	
+			minCount = majCount = 0;													//Reset both counts
+			PORTB = ~_BV(1) & ~_BV(2) & PORTB;											//Take both outputs low
+		}
+	}
+	if(rstMajCount == rstMajMax) {												//If we have reached the reset major timer count
+		rstMinCount++;																//Increase the minor timer count
+		if(rstMinCount == rstMinMax) {												//If we have reached the required number of overflows, we are done resetting
+			rstMinCount = rstMajCount = 0;												//Reset both counts
+			PORTB |= _BV(1);															//Take the reset pin high
+		}
+	}
+	if(PORTB & 6) GTCCR |= 1 << 7;												//If both outputs are high, we are done with this timer... for now
+}
+
+ISR(INT0_vect) {															//If we have a state change on PB0
+	if (PINB & 1){																//And it is now high (rising edge)
+		majCount = minCount = 0;													//Reset our counts
+		if (rstMinCount + rstMajCount == 0) GTCCR |= 1 << 7;						//Timer 0: As long as we arent resetting, disable the prescaler, we dont need it running right now
+		if (!(PORTB & 4)) {															//If the system was shutdown due to a prior failure
+			PORTB |= _BV(2);															//Turn the power cutoff back on
+		}
+	}
 }
