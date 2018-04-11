@@ -2,6 +2,10 @@
 A simple code for an ATTiny85 based watchdog timer.
 
 Watchdog.ino is an arduino sketch.
-main.c is a c proogram written in atmel studio.
+
+WD_vX.c are all codes written in Atmel Studio.
+v1 is the first version of the code, utilizing the arduino "millis" function (similar to the arduino sketch).
+v2 utilizes Timer 0 AND Timer 1 to reduce the frequency of timer interrupts during normal operation.
+v3 only utilizes Timer 0 to simplify the program.
 
 This code is completely untested and is licensed under the MIT license.
