@@ -1,8 +1,7 @@
 # ATTiny85-Watchdog
 A simple code for an ATTiny85 based watchdog timer.
 
-Contents:
-<ul>
+Contents:<ul>
 <li>Watchdog.ino is an arduino sketch.
 
 <li>WD_vX.c are all codes written in Atmel Studio.
@@ -12,4 +11,5 @@ Contents:
 <li>v3 only utilizes Timer 0 to simplify the program.
 </ul>
 </ul>
+
 This code is completely untested and is licensed under the MIT license.
